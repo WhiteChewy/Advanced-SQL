@@ -1,0 +1,96 @@
+Иногда не очень важно, эфиктивен ваш запрос или нет. Например вы можете написать запрос который будет запускаться только 1 раз
+и вообще будет работать только с маленьким датасетом. В данном случае любой запрос который будет давать желаемый результат
+вам подойдет
+
+Но вот что касается запросов которые должны запускаться часто, например запросы сайта на получение информации для страницы?
+Такие запросы должны быть эффективные чтобы не заставлять вашего пользователя ждать пока сайт загрузится.
+
+Или что на счет запросов к большим датасетам? Если они будут медленными это может быть очень затратно по деньгам для вашей
+компании.
+
+Большинство баз данных имеют опитмизатор запросов который запускает ваш запрос наиболее эффективным из возможных способов.
+Но есть несколько стратегий которые помогут вам писать эфективные запросы.
+
+Вот некоторые полезные функции (4_Writting_Efficient_Queries.py).
+- show_amount_of_data_scanned()  -- показывает какое количество данных охватывает запрос
+- show_time_to_run()  -- показывает как долго запрос обрабатывается
+
+Стратегии
+1) Применяйте SELECT только к тем столбцам которые вам нужны.
+Соблазнительно начинать запросы с SELECT * FROM... т.к. не надо задумываться на тему того какой столбец вам нужен. Но это может
+очень не эффективно.
+
+Это особенно важно если в БД есть текстовые поля которые вам не нужны, так как текстовые полямогут быть больше чем другие по
+размеру. А размер - время!
+
+На примере наших функций:
+star_query = "SELECT * FROM `bigquery-public-data.github_repos.contents`"
+show_amount_of_data_scanned(star_query)
+
+basic_query = "SELECT size, binary FROM `bigquery-public-data.github_repos.contents`"
+show_amount_of_data_scanned(basic_query)
+
+Вывод:
+Data processed: 2623.284 GB
+Data processed: 2.466 GB
+
+В данном случае мы видем что количество данных в первом случае почти в 1000 раз больше чем то что нам нужно.
+
+
+2) Читайте меньшее количество данных
+
+3) Избегайте N:N JOINов.
+Большинство JOINов которые мы выполняли были 1:1 JOINы. В данном случае каждая строка в таблице имеет одно соответствие в другой
+таблице.
+
+Другой тип JOINов это N:1 JOINы. Здесь каждой строке в таблице потенциально соответствует несколько строк в другой.
+
+И в конечном итоге N:N JOINы это когда группе строк соответствует другая группа строк в другой таблице. Заметьте что в основном
+все остальные штуки одинаковы, этот тип JOINов создает таблицу с гораздо большим количеством строк чем в двух таблицах вместе
+взятых.
+
+Например
+big_join_query = """
+                 SELECT repo,
+                     COUNT(DISTINCT c.committer.name) as num_committers,
+                     COUNT(DISTINCT f.id) AS num_files
+                 FROM `bigquery-public-data.github_repos.commits` AS c,
+                     UNNEST(c.repo_name) AS repo
+                 INNER JOIN `bigquery-public-data.github_repos.files` AS f
+                     ON f.repo_name = repo
+                 WHERE f.repo_name IN ( 'tensorflow/tensorflow', 'facebook/react', 'twbs/bootstrap', 'apple/swift', 'Microsoft/vscode', 'torvalds/linux')
+                 GROUP BY repo
+                 ORDER BY repo
+                 """
+show_time_to_run(big_join_query)
+
+small_join_query = """
+                   WITH commits AS
+                   (
+                   SELECT COUNT(DISTINCT committer.name) AS num_committers, repo
+                   FROM `bigquery-public-data.github_repos.commits`,
+                       UNNEST(repo_name) as repo
+                   WHERE repo IN ( 'tensorflow/tensorflow', 'facebook/react', 'twbs/bootstrap', 'apple/swift', 'Microsoft/vscode', 'torvalds/linux')
+                   GROUP BY repo
+                   ),
+                   files AS 
+                   (
+                   SELECT COUNT(DISTINCT id) AS num_files, repo_name as repo
+                   FROM `bigquery-public-data.github_repos.files`
+                   WHERE repo_name IN ( 'tensorflow/tensorflow', 'facebook/react', 'twbs/bootstrap', 'apple/swift', 'Microsoft/vscode', 'torvalds/linux')
+                   GROUP BY repo
+                   )
+                   SELECT commits.repo, commits.num_committers, files.num_files
+                   FROM commits 
+                   INNER JOIN files
+                       ON commits.repo = files.repo
+                   ORDER BY repo
+                   """
+
+show_time_to_run(small_join_query)
+
+Выведет:
+Time to run: 11.926 seconds
+Time to run: 4.293 seconds
+
+Первый запрос делает большой N:N JOIN. 
